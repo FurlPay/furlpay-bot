@@ -1,0 +1,116 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: furlpay-bot
+      POSTGRES_PASSWORD: furlpay-bot
+      POSTGRES_DB: furlpay-bot
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U furlpay-bot"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  supervisor:
+    build:
+      context: ../..
+      dockerfile: infra/sandboxes/supervisor/Dockerfile
+    environment:
+      DATA_DIR: /data
+      SUPERVISOR_HOST: "0.0.0.0"
+      SUPERVISOR_PORT: "7091"
+      DOCKER_SOCKET: /var/run/docker.sock
+      FURLPAY_COMPUTER_IMAGE: furlpay-bot/computer:local
+      SANDBOX_COMMAND_TIMEOUT_MS: ${SANDBOX_COMMAND_TIMEOUT_MS:-300000}
+      SANDBOX_SUPERVISOR_TOKEN: ${SANDBOX_SUPERVISOR_TOKEN:?Set SANDBOX_SUPERVISOR_TOKEN in .env}
+      SANDBOX_SCREEN_NETWORK: isolated
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ../../data:/data
+    depends_on:
+      computer:
+        condition: service_completed_successfully
+
+  computer:
+    image: furlpay-bot/computer:local
+    build:
+      context: ../sandboxes/computer
+    command: ["true"]
+    restart: "no"
+
+  data-init:
+    image: busybox:1
+    command: ["chown", "-R", "1000:1000", "/data"]
+    restart: "no"
+    volumes:
+      - ../../data:/data
+
+  api:
+    build:
+      context: ../..
+      dockerfile: infra/compose/Dockerfile
+    command: ["bash", "-lc", "pnpm --filter @furlpay-bot/db exec prisma migrate deploy && pnpm --filter @furlpay-bot/api start"]
+    env_file:
+      - ../../.env
+    environment:
+      DATABASE_URL: postgres://furlpay-bot:furlpay-bot@postgres:5432/furlpay-bot
+      API_HOST: "0.0.0.0"
+      DATA_DIR: /data
+      SANDBOX_SUPERVISOR_URL: http://supervisor:7091
+      WAKEUP_DRIVER: graphile
+      SANDBOX_PROVIDER: docker
+      AGENT_RUNTIME: pi
+    ports:
+      - "127.0.0.1:3100:3100"
+    volumes:
+      - ../../data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      data-init:
+        condition: service_completed_successfully
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: infra/compose/Dockerfile
+    command: ["pnpm", "--filter", "@furlpay-bot/worker", "start"]
+    env_file:
+      - ../../.env
+    environment:
+      BETTER_AUTH_SECRET: ""
+      DATABASE_URL: postgres://furlpay-bot:furlpay-bot@postgres:5432/furlpay-bot
+      DATA_DIR: /data
+      SANDBOX_SUPERVISOR_URL: http://supervisor:7091
+      WAKEUP_DRIVER: graphile
+      SANDBOX_PROVIDER: docker
+      SCREEN_PROXY_SECRET: ""
+      AGENT_RUNTIME: pi
+    volumes:
+      - ../../data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      data-init:
+        condition: service_completed_successfully
+
+  web:
+    build:
+      context: ../..
+      dockerfile: infra/compose/Dockerfile
+    command: ["pnpm", "--filter", "@furlpay-bot/web", "preview", "--host", "0.0.0.0", "--port", "5173"]
+    environment:
+      API_PROXY_TARGET: http://api:3100
+      SCREEN_PROXY_SECRET: ${SCREEN_PROXY_SECRET:?Set SCREEN_PROXY_SECRET in .env}
+      FURLPAY_HOST: ${FURLPAY_HOST:-localhost}
+    ports:
+      - "127.0.0.1:5173:5173"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:

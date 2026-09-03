@@ -1,0 +1,29 @@
+{
+  "name": "@furlpay-bot/testkit",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --root ../.. packages/testkit/src"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.1",
+    "@furlpay-bot/adapter-kit": "workspace:*",
+    "@furlpay-bot/adapters": "workspace:*",
+    "@furlpay-bot/contracts": "workspace:*",
+    "@furlpay-bot/core": "workspace:*",
+    "@furlpay-bot/db": "workspace:*",
+    "@testcontainers/postgresql": "^11.5.1",
+    "pngjs": "7.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "@types/pngjs": "6.0.5",
+    "typescript": "^5.9.2",
+    "vitest": "^4.1.10"
+  }
+}

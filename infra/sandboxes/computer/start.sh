@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+set -uo pipefail
+export DISPLAY="${DISPLAY:-:1}"
+export HOME="${HOME:-/home/furlpay-bot}"
+AGENT_HOME="$HOME"
+mkdir -p "$AGENT_HOME" "$AGENT_HOME/.local/bin" "$AGENT_HOME/.config" /tmp/furlpay-bot /tmp/.X11-unix /tmp/fluxbox-home
+export PATH="$AGENT_HOME/.local/bin:/usr/local/bin:$PATH"
+export NPM_CONFIG_PREFIX="$AGENT_HOME/.local"
+export PIP_USER=1
+cd "$AGENT_HOME"
+
+if [[ -n "${FURLPAY_COMPUTER_CONTROL_TOKEN:-}" ]]; then
+  /usr/local/bin/furlpay-bot-computer-control >/tmp/furlpay-bot/control.log 2>&1 &
+fi
+
+rm -f /tmp/.X1-lock /tmp/.X11-unix/X1
+
+Xvfb :1 -screen 0 1280x800x24 -ac +extension RANDR +render -noreset >/tmp/furlpay-bot/xvfb.log 2>&1 &
+XVFB_PID=$!
+
+ready=0
+for _ in $(seq 1 100); do
+  if xdpyinfo -display :1 >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
+  sleep 0.1
+done
+if [[ "$ready" -ne 1 ]]; then
+  echo "Xvfb failed to start" >&2
+  cat /tmp/furlpay-bot/xvfb.log >&2 || true
+  exit 1
+fi
+
+if command -v dbus-launch >/dev/null 2>&1; then
+  eval "$(dbus-launch --sh-syntax)"
+fi
+
+xsetroot -solid "#111113" >/dev/null 2>&1 || true
+mkdir -p /tmp/fluxbox-home/.fluxbox
+cp /etc/furlpay-bot/fluxbox/init /tmp/fluxbox-home/.fluxbox/init
+cp /etc/furlpay-bot/fluxbox/apps /tmp/fluxbox-home/.fluxbox/apps 2>/dev/null || true
+cp /etc/furlpay-bot/fluxbox/menu /tmp/fluxbox-home/.fluxbox/menu 2>/dev/null || true
+cat > /tmp/fluxbox-home/.fluxbox/startup <<'EOF'
+#!/bin/sh
+xsetroot -solid "#111113"
+exec fluxbox -rc /tmp/fluxbox-home/.fluxbox/init
+EOF
+chmod +x /tmp/fluxbox-home/.fluxbox/startup
+HOME=/tmp/fluxbox-home /tmp/fluxbox-home/.fluxbox/startup >/tmp/furlpay-bot/fluxbox.log 2>&1 &
+
+register_browser_handler() {
+  local mime="$1"
+  if ! xdg-mime default furlpay-bot-browser.desktop "$mime" >/dev/null 2>&1 \
+    || [[ "$(xdg-mime query default "$mime" 2>/dev/null || true)" != "furlpay-bot-browser.desktop" ]]; then
+    echo "failed to register furlpay-bot-browser for $mime" >&2
+    exit 1
+  fi
+}
+register_browser_handler x-scheme-handler/http
+register_browser_handler x-scheme-handler/https
+register_browser_handler text/html
+if ! xdg-settings set default-web-browser furlpay-bot-browser.desktop >/dev/null 2>&1 \
+  || [[ "$(xdg-settings get default-web-browser 2>/dev/null || true)" != "furlpay-bot-browser.desktop" ]]; then
+  echo "failed to set default web browser to furlpay-bot-browser" >&2
+  exit 1
+fi
+
+rm -f "$AGENT_HOME/.browser-profiles/chromium/SingletonLock" \
+  "$AGENT_HOME/.browser-profiles/chromium/SingletonCookie" \
+  "$AGENT_HOME/.browser-profiles/chromium/SingletonSocket"
+
+HOME="$AGENT_HOME" furlpay-bot-browser >/tmp/furlpay-bot/browser.log 2>&1 &
+browser_up=0
+for _ in $(seq 1 40); do
+  if xdotool search --onlyvisible --class chromium >/dev/null 2>&1; then
+    browser_up=1
+    break
+  fi
+  if xdotool search --onlyvisible --class Chromium >/dev/null 2>&1; then
+    browser_up=1
+    break
+  fi
+  sleep 0.25
+done
+if [[ "$browser_up" -ne 1 ]]; then
+  echo "browser failed to start" >&2
+  cat /tmp/furlpay-bot/browser.log >&2 || true
+  xterm -geometry 100x28+48+48 -bg "#111113" -fg "#E8E8EA" -cr "#E8E8EA" -title "Terminal" >/tmp/furlpay-bot/xterm.log 2>&1 &
+fi
+
+x11vnc -display :1 -forever -shared -viewonly -nopw -listen 127.0.0.1 -rfbport 5900 -xkb -ncache 0 >/tmp/furlpay-bot/x11vnc.log 2>&1 &
+
+NOVNC_ROOT=/usr/share/novnc
+if [[ ! -d "$NOVNC_ROOT" ]]; then
+  echo "noVNC is missing from the computer image" >&2
+  exit 1
+fi
+if [[ ! -f "$NOVNC_ROOT/embed.html" ]]; then
+  echo "noVNC embed.html is missing from the computer image" >&2
+  exit 1
+fi
+if [[ ! -f "$NOVNC_ROOT/clipboard-bridge.js" ]]; then
+  echo "noVNC clipboard-bridge.js is missing from the computer image" >&2
+  exit 1
+fi
+websockify --heartbeat=30 --web="$NOVNC_ROOT" 0.0.0.0:6080 127.0.0.1:5900 >/tmp/furlpay-bot/novnc.log 2>&1 &
+
+while kill -0 "$XVFB_PID" 2>/dev/null; do
+  sleep 2
+done
+echo "Xvfb exited" >&2
+exit 1

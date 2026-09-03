@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerabilities
+    url: https://github.com/FurlPay/furlpay-bot/blob/main/SECURITY.md
+    about: Report security issues to security@bot.furlpay.com — do not open a public issue.
+  - name: User support
+    url: mailto:support@bot.furlpay.com
+    about: Questions about using FurlPay Bot or self-hosting help.
+  - name: Maintainer
+    url: mailto:elie@bot.furlpay.com
+    about: Reach the maintainer directly.
